@@ -14,11 +14,27 @@ h1 { color:#ff0000; text-align:center; margin-bottom:30px; }
 .card p { color:#ccc; margin:5px 0; font-size:0.9em; }
 .buttons a { display:inline-block; background:#ff0000; color:#000; padding:8px 12px; border-radius:6px; text-decoration:none; font-weight:bold; margin:5px 4px; transition:0.2s; }
 .buttons a:hover { background:#fff; color:#ff0000; }
+/* Install overlay */
+#installOverlay {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: #ff0000;
+  color: #000;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+  display: none;
+  z-index: 9999;
+  box-shadow: 0 0 12px #ff0000;
+}
 </style>
 </head>
 <body>
 <h1>GLITCH OVERRIDE Web Apps</h1>
 <div class="grid" id="appGrid"></div>
+<div id="installOverlay">Install App</div>
 
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.0/dist/jszip.min.js"></script>
 <script>
@@ -26,15 +42,18 @@ const OWNER = 'GLITCHED-OVERRIDE';
 const REPO = 'Web-Apps';
 const FOLDER = 'Apps';
 const GRID = document.getElementById('appGrid');
+const INSTALL_BTN = document.getElementById('installOverlay');
 
-// Fetch all .zip files in Apps folder from GitHub API
+let deferredPrompt = null;
+
+// Fetch all .zip files
 async function getZipFiles() {
   const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FOLDER}`);
   const files = await res.json();
   return files.filter(f => f.name.endsWith('.zip'));
 }
 
-// Create a card/button for each app
+// Create app card/button
 function createAppCard(name) {
   const card = document.createElement('div');
   card.className = 'card';
@@ -42,7 +61,7 @@ function createAppCard(name) {
     <h2>${name}</h2>
     <p>Open app in full page (PWA ready)</p>
     <div class="buttons">
-      <a href="/${name}" data-app="${name}">Open App</a>
+      <a href="${window.location.origin}/${name}" data-app="${name}">Open App</a>
     </div>
   `;
   GRID.appendChild(card);
@@ -59,20 +78,27 @@ async function openAppPage(appName) {
   if (!indexFile) { alert('Index.html not found'); return; }
   let html = await indexFile.async('text');
 
-  // Rewrite relative paths for assets
+  // Rewrite asset URLs
   html = html.replace(/(src|href)=["'](?!https?:)([^"']+)["']/gi,
     (match, attr, path) => `${attr}="https://cdn.jsdelivr.net/gh/${OWNER}/${REPO}@main/${FOLDER}/${zipFileName}/${path}"`);
 
-  // Inject manifest.json dynamically
+  // Inject manifest
   const manifestFile = zip.file('manifest.json');
   if (manifestFile) {
-    const link = document.createElement('link');
-    link.rel = 'manifest';
-    link.href = `https://cdn.jsdelivr.net/gh/${OWNER}/${REPO}@main/${FOLDER}/${zipFileName}/manifest.json`;
-    document.head.appendChild(link);
+    const manifestContent = await manifestFile.async('text');
+    const blob = new Blob([manifestContent], { type: 'application/json' });
+    const manifestURL = URL.createObjectURL(blob);
+
+    let link = document.querySelector('link[rel="manifest"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'manifest';
+      document.head.appendChild(link);
+    }
+    link.href = manifestURL;
   }
 
-  // Replace page content
+  // Replace page
   document.open();
   document.write(html);
   document.close();
@@ -83,7 +109,6 @@ async function init() {
   const zips = await getZipFiles();
   zips.forEach(f => createAppCard(f.name.replace('.zip','')));
 
-  // Click handler
   GRID.addEventListener('click', e => {
     if (e.target.tagName === 'A' && e.target.dataset.app) {
       e.preventDefault();
@@ -93,16 +118,32 @@ async function init() {
     }
   });
 
-  // Handle back/forward
+  // Handle browser back/forward
   window.addEventListener('popstate', e => {
     if (e.state && e.state.app) openAppPage(e.state.app);
     else location.reload();
   });
 
-  // If page loaded directly on /AppName
+  // Direct navigation
   const path = window.location.pathname.slice(1);
   if (path) openAppPage(path);
 }
+
+// PWA install prompt
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  INSTALL_BTN.style.display = 'block';
+});
+
+INSTALL_BTN.addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const choice = await deferredPrompt.userChoice;
+  if (choice.outcome === 'accepted') console.log('App installed');
+  deferredPrompt = null;
+  INSTALL_BTN.style.display = 'none';
+});
 
 init();
 </script>
